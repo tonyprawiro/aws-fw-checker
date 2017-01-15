@@ -4,12 +4,18 @@ import json
 import sys
 import base64
 import textwrap
+import subprocess
 
 # define common ports here, add as needed
 common_ports = [21, 25, 80, 443, 139, 3389, 1723, 1521, 23, 110, 445, 8080, 8000, 3000, 5666, 5900, 1433, 3306, 5432]
 
 # define machine image for DO
 digital_ocean_machine_image_id = 17384153
+
+# Get content of a file, hopefully a small file!
+def file_get_contents(filename):
+    with open(filename) as f:
+        return f.read()
 
 # JSON serializer
 def default(obj):
@@ -35,6 +41,18 @@ def lookup(arr, field, value):
     except:
         pass
     return result
+
+# Add indent to textwrap module
+try:
+    import textwrap
+    textwrap.indent
+except AttributeError:  # undefined function (wasn't added until Python 3.3)
+    def indent(text, amount, ch=' '):
+        padding = amount * ch
+        return ''.join(padding+line for line in text.splitlines(True))
+else:
+    def indent(text, amount, ch=' '):
+        return textwrap.indent(text, amount * ch)
 
 # retrieve credentials from environment variable
 try:
@@ -100,4 +118,46 @@ result_encoded = "\n".join(
     )
 )
 
+result_encoded_indented = indent(result_encoded, 4)
+
+# Generate a new RSA keypair
+os.remove("fwcheck")
+os.remove("fwcheck.pub")
+subprocess.call("/usr/bin/ssh-keygen -q -t rsa -f fwcheck -N \"\"", shell=True)
+
+# Get public key content
+ssh_public_key = file_get_contents('fwcheck.pub')
+
 # user data
+user_data = """
+#cloud-config
+
+package_upgrade: true
+
+users:
+  - name: fwchecker
+    shell: /bin/bash
+    ssh-authorized-keys:
+      - %s
+
+packages:
+  - telnet
+  - wget
+  - git
+  - curl
+  - vim
+
+write_files:
+  - encoding: b64
+    content: !!binary |
+%s
+    path: /root/data.json
+
+runcmd:
+  - 
+""" % (
+    ssh_public_key ,
+    result_encoded_indented
+)
+
+print user_data
