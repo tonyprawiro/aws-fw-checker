@@ -22,13 +22,14 @@ common_ports = [
 # define machine image for DO
 digital_ocean_machine_image_id = 17384153
 
-# Get content of a file, hopefully a small file!
+
 def file_get_contents(filename):
+    '''Get content of a file, hopefully a small file!'''
     with open(filename) as f:
         return f.read()
 
-# JSON serializer
 def default(obj):
+    '''JSON serializer'''
     import calendar, datetime
 
     if isinstance(obj, datetime.datetime):
@@ -67,9 +68,9 @@ else:
 # retrieve credentials from environment variable
 try:
     AWS_ACCESS_KEY_ID = os.environ["FWCHECK_AWS_ACCESS_KEY_ID"]
-    AWS_SECRET_KEY    = os.environ["FWCHECK_SECRET_KEY"]
-    AWS_REGION        = os.environ["FWCHECK_REGION"]
-    DO_TOKEN          = os.environ["FWCHECK_DO_TOKEN"]
+    AWS_SECRET_KEY = os.environ["FWCHECK_SECRET_KEY"]
+    AWS_REGION = os.environ["FWCHECK_REGION"]
+    DO_TOKEN = os.environ["FWCHECK_DO_TOKEN"]
 except:
     print "Usage: FWCHECK_AWS_ACCESS_KEY_ID=XXXXX \\"
     print "       FWCHECK_SECRET_KEY=XXXXX \\"
@@ -80,15 +81,16 @@ except:
 
 # Create boto3 EC2 client
 ec2 = boto3.client('ec2', 
-    aws_access_key_id=AWS_ACCESS_KEY_ID,
-    aws_secret_access_key=AWS_SECRET_KEY,
-    region_name=AWS_REGION)
+                   aws_access_key_id=AWS_ACCESS_KEY_ID,
+                   aws_secret_access_key=AWS_SECRET_KEY,
+                   region_name=AWS_REGION)
+
+scan_ports = common_ports
 
 # Get security groups and cache group/ports information
 secgroups = ec2.describe_security_groups()
 secgrpports = {}
 for secgroup in secgroups["SecurityGroups"]:
-    contains_all_traffic = False
     ports = []
     for ingress in secgroup["IpPermissions"]:
         if ingress["IpProtocol"] == "-1":
@@ -99,13 +101,14 @@ for secgroup in secgroups["SecurityGroups"]:
             if to_port - from_port != 65535:
                 for p in range(from_port, to_port+1):
                     ports.append(p)
+                    if p not in scan_ports:
+                        scan_ports.append(p)
     secgrpports[secgroup["GroupId"]] = ports
 
 # Get machines
 instances = ec2.describe_instances(MaxResults = 1000)
 result = {}
 machines = []
-ports = []
 for res in instances["Reservations"]:
     for inst in res["Instances"]:
         public_ip = ""
@@ -114,12 +117,14 @@ for res in instances["Reservations"]:
         except:
             pass
         if public_ip != "":
-            # machine = {}
-            # machine["IpAddress"] = public_ip
-            # machine["Ports"] = [] #common_ports
-            # for grp in inst["SecurityGroups"]:
-            #     machine["Ports"].extend(secgrpports[grp["GroupId"]])
-            machines.append(public_ip)
+            machine = {}
+            machine["IpAddress"] = public_ip
+            machine["Ports"] = [] #common_ports
+            for grp in inst["SecurityGroups"]:
+                machine["Ports"].extend(secgrpports[grp["GroupId"]])
+            machines.append(machine)
+
+result = machines
 
 # Encode the result properly
 result_encoded = "\n".join(
@@ -168,8 +173,12 @@ write_files:
 runcmd:
   - 
 """ % (
-    ssh_public_key ,
+    ssh_public_key,
     result_encoded_indented
 )
 
+'''
+Sample command to test TCP port open, CentOS 7 (ncat 6.4)
+nc -n -w5 220.255.6.55 5000 </dev/null
+'''
 print user_data
