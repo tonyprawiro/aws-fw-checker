@@ -7,7 +7,17 @@ import textwrap
 import subprocess
 
 # define common ports here, add as needed
-common_ports = [21, 25, 80, 443, 139, 3389, 1723, 1521, 23, 110, 445, 8080, 8000, 3000, 5666, 5900, 1433, 3306, 5432]
+common_ports = [
+    # privileged
+    21, 22, 23, 25, 80, 110, 139, 389, 443, 445,
+    # pptp
+    1723,
+    # rdp
+    3389,
+    # extra app servers
+    8080, 8000, 3000, 5666, 5900,
+    # databases (sql, oracle, mysql, postgres, mongo)
+    1433, 1521, 3306, 5432, 27017, 27018, 27019, 28017]
 
 # define machine image for DO
 digital_ocean_machine_image_id = 17384153
@@ -93,7 +103,9 @@ for secgroup in secgroups["SecurityGroups"]:
 
 # Get machines
 instances = ec2.describe_instances(MaxResults = 1000)
-result = []
+result = {}
+machines = []
+ports = []
 for res in instances["Reservations"]:
     for inst in res["Instances"]:
         public_ip = ""
@@ -102,12 +114,12 @@ for res in instances["Reservations"]:
         except:
             pass
         if public_ip != "":
-            machine = {}
-            machine["IpAddress"] = public_ip
-            machine["Ports"] = [] #common_ports
-            for grp in inst["SecurityGroups"]:
-                machine["Ports"].extend(secgrpports[grp["GroupId"]])
-            result.append(machine)
+            # machine = {}
+            # machine["IpAddress"] = public_ip
+            # machine["Ports"] = [] #common_ports
+            # for grp in inst["SecurityGroups"]:
+            #     machine["Ports"].extend(secgrpports[grp["GroupId"]])
+            machines.append(public_ip)
 
 # Encode the result properly
 result_encoded = "\n".join(
