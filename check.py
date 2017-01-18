@@ -1,9 +1,11 @@
 import boto3
 import requests
 import os
+import json
 
-# Return isntance tag value
-def get_instance_tag_value(arr, tagName = "Name"):
+
+def get_instance_tag_value(arr, tag_name = "Name"):
+    """Return instance tag value"""
     result = ""
     try:
         for member in arr:
@@ -13,8 +15,17 @@ def get_instance_tag_value(arr, tagName = "Name"):
         pass
     return result
 
+# Load exclusion list, exclude.json, which must be in the same directory as this file
+exclusion_json = ""
+with open("%s/exclude.json" % (os.path.dirname(os.path.realpath(__file__)))) as f:
+    exclusion_json = f.read()
+exclusions = json.loads(exclusion_json)
+
 # Create boto3 EC2 client
-ec2 = boto3.client('ec2')
+ec2 = boto3.client('ec2',
+                   aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
+                   aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
+                   region_name=os.environ["AWS_REGION_NAME"])
 
 # Get security groups and cache group/ports information
 secgroups = ec2.describe_security_groups()
@@ -39,7 +50,7 @@ for secgroup in secgroups["SecurityGroups"]:
     secgroups_public_ports[secgroup["GroupId"]] = calc
 
 # Get machines
-instances = ec2.describe_instances(MaxResults = 1000)
+instances = ec2.describe_instances(MaxResults=1000)
 machines = []
 for res in instances["Reservations"]:
     for inst in res["Instances"]:
@@ -52,41 +63,52 @@ for res in instances["Reservations"]:
             machine = {}
             machine["State"] = inst["State"]["Name"]
             machine["InstanceId"] = inst["InstanceId"]
-            machine["Name"] = get_instance_tag_value(inst["Tags"], "Name")
+            machine["Name"] = get_instance_tag_value(arr=inst["Tags"], tag_name="Name")
             if machine["Name"] == "":
                 machine["Name"] = inst["InstanceId"]
             machine["IpAddress"] = public_ip
             machine["Ports"] = []
-            is_machine_exposed = False
             for grp in inst["SecurityGroups"]:
                 if grp["GroupId"] in secgroups_scrutiny:
-                    is_machine_exposed = True
                     for secgroup in secgroups["SecurityGroups"]:
                         if secgroup["GroupId"] == grp["GroupId"]:
-                            machine["Ports"] = secgroups_public_ports[grp["GroupId"]]
-            if is_machine_exposed:
+                            for ps in secgroups_public_ports[grp["GroupId"]]:
+                                if ps not in machine["Ports"]:  # not already added
+                                    try:
+                                        if ps not in exclusions[inst["InstanceId"]]:
+                                            machine["Ports"].append(ps)
+                                    except:
+                                        machine["Ports"].append(ps)
+            if len(machine["Ports"]) > 0:
                 machines.append(machine)
 
-output  = "_~Daily EC2 SecGroup Sanity Check~_\n"
-output += "The following EC2 instances are running and are publicly accessible (0.0.0.0/0) at the following port(s). "
-output += "Please review and ensure appropriate access control is in place.\n"
-output += ""
-output += "\n"
-for machine in machines:
-    output += "Name: " + machine["Name"]+ "\n"
-    output += "IP address: "  + machine["IpAddress"] + "\n"
-    output += "Port(s): " + ", ".join(machine["Ports"]) + "\n"
+# Generate the output
+output = "_~Daily EC2 SecGroup Sanity Check~_\n"
+if len(machines)>0:
+    output += "The following EC2 instances are running and are publicly accessible (0.0.0.0/0) at the following port(s). "
+    output += "Please review and ensure appropriate access control is in place. "
+    output += "To add machine:port into exclusion list, please inform @tonyhadimulyono.\n"
+    output += ""
     output += "\n"
+    for machine in machines:
+        output += "Name: %s (%s)\n" % (machine["Name"], machine["InstanceId"])
+        output += "IP address: %s\n" % machine["IpAddress"]
+        output += "Port(s): %s\n" % (", ".join(machine["Ports"]))
+        output += "\n"
+else:
+    output += "\nEverything seems to be in order. See you tomorrow~"
 
 print output
 
-print "Sending result via Telegram..."
+# Send result via Telegram
+print "Sending result via Telegram... "
 try:
-    requests.post(url = "https://api.telegram.org/bot%s/sendMessage" % os.environ["TELEGRAM_GDS_CHATOPS_BOT_TOKEN"], data={
-        "parse_mode": "Markdown",
-        "chat_id": os.environ["TELEGRAM_FWCHECK_CHATGROUP_ID"],
-        "text": output
-    })
+    requests.post(url = "https://api.telegram.org/bot%s/sendMessage" % os.environ["TELEGRAM_GDS_CHATOPS_BOT_TOKEN"],
+                  data={
+                        "parse_mode": "Markdown",
+                        "chat_id": os.environ["TELEGRAM_FWCHECK_CHATGROUP_ID"],
+                        "text": output
+                  })
+    print "done!"
 except:
-    print "Failed!"
-
+    print "failed!"
