@@ -85,9 +85,9 @@ for res in instances["Reservations"]:
 # Generate the output
 output = "_~Daily EC2 SecGroup Sanity Check~_\n"
 if len(machines)>0:
-    output += "The following EC2 instances are running and are publicly accessible (0.0.0.0/0) at the following port(s). "
+    output += "The following EC2 instances are running, have public IP addresses, "
+    output += "and are publicly accessible (0.0.0.0/0) at the following port(s). "
     output += "Please review and ensure appropriate access control is in place. "
-    output += "To add machine:port into exclusion list, please inform @tonyhadimulyono.\n"
     output += ""
     output += "\n"
     for machine in machines:
@@ -96,7 +96,9 @@ if len(machines)>0:
         output += "Port(s): %s\n" % (", ".join(machine["Ports"]))
         output += "\n"
 else:
-    output += "\nEverything seems to be in order. See you tomorrow~"
+    output += "\nEverything seems to be in order. See you tomorrow~\n"
+
+output += "\nTo check the exclusion list, or add machine:port into the list, please inform @tonyhadimulyono.\n"
 
 print output
 
