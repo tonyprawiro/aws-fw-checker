@@ -4,6 +4,10 @@ import os
 import json
 
 
+# Get account name from environment variable
+account_name = os.environ["FWCHECK_ACCOUNT_NAME"]
+
+
 def get_instance_tag_value(arr, tag_name = "Name"):
     """Return instance tag value"""
     result = ""
@@ -15,7 +19,7 @@ def get_instance_tag_value(arr, tag_name = "Name"):
         pass
     return result
 
-# Load exclusion list, exclude.json, which must be in the same directory as this file
+# Load exclusion list, exclude.<ACCOUNT-NAME>.json, which must be in the same directory as this file
 # example:
 # {
 #     "i-abc12345": [
@@ -27,7 +31,7 @@ def get_instance_tag_value(arr, tag_name = "Name"):
 #     ]
 # }
 exclusion_json = ""
-with open("%s/exclude.json" % (os.path.dirname(os.path.realpath(__file__)))) as f:
+with open("%s/exclude.%s.json" % (os.path.dirname(os.path.realpath(__file__)), account_name)) as f:
     exclusion_json = f.read()
 exclusions = json.loads(exclusion_json)
 
@@ -111,21 +115,18 @@ for res in instances["Reservations"]:
 
 
 # Generate the output, fancy stuff..
-output = "_~Daily EC2 SecGroup Sanity Check~_\n\n"
-if len(machines)>0:
-    output += "The following EC2 instances are running, have public IP addresses, "
-    output += "and are publicly accessible (0.0.0.0/0) at the following port(s). "
-    output += "Please review and ensure appropriate access control is in place. "
-    output += "\n\n"
+output = "\n-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-\n\n"
+output += "*Account: %s*\n\n" % account_name
+total_machines = len(machines)
+if total_machines>0:
     for machine in machines:
         output += "Name: %s (%s)\n" % (machine["Name"], machine["InstanceId"])
         output += "IP address: %s\n" % machine["IpAddress"]
         output += "Port(s): %s\n" % (", ".join(machine["Ports"]))
         output += "\n"
+    output += "Total for %s: %d machine(s)" % (account_name, len(machines))
 else:
-    output += "Everything seems to be in order. See you tomorrow~\n"
-
-output += "\nTo check the exclusion list, or add machine:port into the list, please inform DevOps team.\n"
+    output += "Everything is in order for this account ~\n"
 
 
 # Send result to stdin
@@ -133,15 +134,12 @@ print output
 
 
 # Send result via Telegram
-print "Sending result via Telegram... "
 try:
-    requests.post(url = "https://api.telegram.org/bot%s/sendMessage" % os.environ["TELEGRAM_GDS_CHATOPS_BOT_TOKEN"],
+    requests.post(url = "https://api.telegram.org/bot%s/sendMessage" % os.environ["TELEGRAM_BOT_TOKEN"],
                   data={
                         "parse_mode": "Markdown",
-                        "chat_id": os.environ["TELEGRAM_FWCHECK_CHATGROUP_ID"],
+                        "chat_id": os.environ["TELEGRAM_CHATGROUP_ID"],
                         "text": output
                   })
-    print "done!"
 except:
-    print "failed!"
-
+    pass
