@@ -3,3 +3,4 @@ exclude*
 run.txt
 greet*
 check_wrapper.sh
+/.project
