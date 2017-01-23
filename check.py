@@ -4,6 +4,21 @@ import os
 import json
 
 
+def default(obj):
+    """Default JSON serializer."""
+    import calendar, datetime
+
+    if isinstance(obj, datetime.datetime):
+        if obj.utcoffset() is not None:
+            obj = obj - obj.utcoffset()
+        millis = int(
+            calendar.timegm(obj.timetuple()) * 1000 +
+            obj.microsecond / 1000
+        )
+        return millis
+    raise TypeError('Not sure how to serialize %s' % (obj,))
+
+
 # Get account name from environment variable
 account_name = os.environ["FWCHECK_ACCOUNT_NAME"]
 
@@ -20,6 +35,7 @@ def get_instance_tag_value(arr, tag_name = "Name"):
     return result
 
 # Load exclusion list, exclude.<ACCOUNT-NAME>.json, which must be in the same directory as this file
+# the exclusion works both for EC2 and RDS instances
 # example:
 # {
 #     "i-abc12345": [
@@ -28,7 +44,9 @@ def get_instance_tag_value(arr, tag_name = "Name"):
 #     ],
 #     "i-def54321": [
 #         "8443"
-#     ]
+#     ],
+#     "rds-instance-name1",
+#     "rds-instance-name2"
 # }
 exclusion_json = ""
 with open("%s/exclude.%s.json" % (os.path.dirname(os.path.realpath(__file__)), account_name)) as f:
@@ -38,6 +56,13 @@ exclusions = json.loads(exclusion_json)
 
 # Create boto3 EC2 client
 ec2 = boto3.client('ec2',
+                   aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
+                   aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
+                   region_name=os.environ["AWS_REGION_NAME"])
+
+
+# Create boto3 RDS client
+rds = boto3.client('rds',
                    aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
                    aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
                    region_name=os.environ["AWS_REGION_NAME"])
@@ -114,24 +139,73 @@ for res in instances["Reservations"]:
                 machines.append(machine)
 
 
+# Get RDS instances
+rds_instances = rds.describe_db_instances()
+databases = []
+for db in rds_instances["DBInstances"]:
+
+    if db["PubliclyAccessible"] and db["DBInstanceStatus"]=="available":
+
+        dbdata = {}
+        dbdata["DBInstanceIdentifier"] = db["DBInstanceIdentifier"]
+        dbdata["DBName"] = db["DBName"]
+        dbdata["Engine"] = db["Engine"]
+        dbdata["Endpoint"] = "%s:%d" % (db["Endpoint"]["Address"], db["Endpoint"]["Port"])
+        dbdata["Ports"] = []
+
+        for grp in db["VpcSecurityGroups"]:
+
+            if grp["VpcSecurityGroupId"] in secgroups_scrutiny:  # If the security group contains 0.0.0.0/0
+
+                for ps in secgroups_public_ports[grp["VpcSecurityGroupId"]]: # Check the ports in this security group
+
+                    secgroup_port = secgroups_public_ports[grp["VpcSecurityGroupId"]]
+
+                    if " to " in secgroup_port:
+                        from_port, to_port = secgroup_port.split(" to ", 2)
+                    else:
+                        from_port = secgroup_port
+                        to_port = secgroup_port
+
+                    if from_port <= db["Endpoint"]["Port"] <= to_port:
+                        dbdata["Ports"].append(ps)
+
+        if len(dbdata["Ports"]) > 0:  #
+            databases.append(dbdata)
+
+
 # Generate the output, fancy stuff..
-output = "\n-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-\n\n"
-output += "*Account: %s*\n\n" % account_name
 total_machines = len(machines)
-if total_machines>0:
+total_databases = len(databases)
+if total_machines>0 or total_databases>0:
+
+    output = "*Account: %s*\n\n" % account_name
+
     for machine in machines:
         output += "Name: %s (%s)\n" % (machine["Name"], machine["InstanceId"])
         output += "IP address: %s\n" % machine["IpAddress"]
         output += "Port(s): %s\n" % (", ".join(machine["Ports"]))
         output += "\n"
-    output += "Total for %s: %d machine(s)" % (account_name, len(machines))
+
+    for database in databases:
+
+        output += "RDS Instance Name/Schema (Engine): %s/%s (%s)\n" % (database["DBInstanceIdentifier"],
+                                                                       database["DBName"],
+                                                                       database["Engine"])
+        output += "Endpoint: %s\n" % database["Endpoint"]
+        output += "\n"
+
+    output += "%d EC2 and RDS instance(s) are whitelisted. " % len(exclusions)
+    output += "Follow-up is needed for for %d instance(s) outside of the whitelist." % (total_machines + total_databases)
+
 else:
-    output += "Everything is in order for this account ~\n"
+
+    output = "*Account %s*: %d EC2 and RDS instance(s) are whitelisted. " % (account_name, len(exclusions))
+    output+= "Everything is in order.\n"
 
 
-# Send result to stdin
+# Send result to stdout
 print output
-
 
 # Send result via Telegram
 try:
